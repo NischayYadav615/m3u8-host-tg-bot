@@ -1,4 +1,4 @@
-         base_url = '/
+
 #!/usr/bin/env python3
 """
 🎬 COMPLETE KOYEB HLS STREAMING BOT WITH MONGODB 🎬
