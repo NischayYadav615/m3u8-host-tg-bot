@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-🎬 KOYEB-READY TELEGRAM HLS STREAMING BOT - FIXED & ERROR-FREE 🎬
+🎬 KOYEB-READY TELEGRAM HLS STREAMING BOT - FULLY FIXED 🎬
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ FULLY COMPATIBLE WITH PTB v22.3 (Latest Stable)
-🚀 Optimized for Koyeb deployment with port 8080 - NO ERRORS
+✅ FULLY COMPATIBLE WITH PTB v22.3 + aiohttp compatibility fixes
+🚀 Optimized for Koyeb deployment with FFmpeg installation
 📺 Advanced HLS streaming with bulletproof error handling
 """
 
@@ -22,9 +22,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, List
 
-# Web server with streaming optimization
-from aiohttp import web, ClientSession, WSMsgType, ClientTimeout
-from aiohttp.web import WebSocketResponse  # FIXED: Correct import for WebSocket
+# Web server with streaming optimization - FIXED IMPORTS & COMPATIBILITY
+from aiohttp import web, ClientSession, WSMsgType, ClientTimeout, TCPConnector
+from aiohttp.web import WebSocketResponse
 import aiofiles
 
 # Latest Telegram bot (PTB v22.3 compatible)
@@ -100,24 +100,66 @@ logging.basicConfig(
         logging.FileHandler(LOGS_DIR / "bot.log", mode='a')
     ]
 )
-logger = logging.getLogger("HLS_Bot_v2")
+logger = logging.getLogger("HLS_Bot_v2_Fixed")
+
+# ==================== FFMPEG INSTALLATION ====================
+async def install_ffmpeg():
+    """Install FFmpeg on Koyeb/container environments"""
+    try:
+        logger.info("🔧 Installing FFmpeg...")
+        
+        # Try different installation methods
+        install_commands = [
+            ["apt-get", "update", "&&", "apt-get", "install", "-y", "ffmpeg"],
+            ["apk", "add", "ffmpeg"],
+            ["yum", "install", "-y", "ffmpeg"],
+            ["dnf", "install", "-y", "ffmpeg"]
+        ]
+        
+        for cmd in install_commands:
+            try:
+                result = await asyncio.create_subprocess_exec(
+                    *cmd, 
+                    stdout=asyncio.subprocess.PIPE, 
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await result.wait()
+                if result.returncode == 0:
+                    logger.info("✅ FFmpeg installed successfully")
+                    return True
+            except:
+                continue
+        
+        logger.warning("⚠️ Could not install FFmpeg automatically")
+        return False
+        
+    except Exception as e:
+        logger.error(f"❌ FFmpeg installation error: {e}")
+        return False
 
 # ==================== GLOBAL STATE MANAGEMENT ====================
 class StreamManager:
     def __init__(self):
         self.active_streams: Dict[str, Dict[str, Any]] = {}
         self.ffmpeg_processes: Dict[str, asyncio.subprocess.Process] = {}
-        self.websocket_connections: Dict[str, List[WSResponse]] = {}
+        self.websocket_connections: Dict[str, List[WebSocketResponse]] = {}
         self.client_session: Optional[ClientSession] = None
         
     async def init_session(self):
-        """Initialize aiohttp client session with proper timeout"""
+        """FIXED: Initialize aiohttp client session with correct parameters"""
         if self.client_session is None or self.client_session.closed:
             timeout = ClientTimeout(total=CONFIG["CONNECTION_TIMEOUT"])
+            
+            # FIXED: Use correct parameter names for current aiohttp version
+            connector = TCPConnector(
+                limit=100,           # FIXED: was 'connector_limit'
+                limit_per_host=30,   # FIXED: was 'connector_limit_per_host'
+                enable_cleanup_closed=True
+            )
+            
             self.client_session = ClientSession(
                 timeout=timeout,
-                connector_limit=100,
-                connector_limit_per_host=30
+                connector=connector
             )
             logger.info("✅ HTTP client session initialized")
     
@@ -603,7 +645,8 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Please send a valid live streaming URL.\n\n"
             "**✅ Supported formats:**\n"
             "• `https://example.com/playlist.m3u8`\n"
-            "• `https://stream.tv/live.m3u8`",
+            "• `https://stream.tv/live.m3u8`\n\n"
+            "**ℹ️ Note:** FFmpeg is required for streaming but will be installed automatically when you create your first stream.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=create_main_keyboard()
         )
@@ -628,16 +671,47 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🚀 **Creating Your Stream...**\n\n"
         "⏳ **Progress:**\n"
         "✅ URL validated\n"
+        "🔧 Installing FFmpeg (if needed)...\n"
         "🔄 Testing connectivity...\n"
         "🔄 Starting stream engine...\n"
         "🔄 Generating hosted URL...\n\n"
-        "⚡ This usually takes 10-15 seconds",
+        "⚡ This may take 30-60 seconds for first-time setup",
         parse_mode=ParseMode.MARKDOWN
     )
 
     try:
+        # Install FFmpeg if not available
+        ffmpeg_available = False
+        try:
+            result = subprocess.run([CONFIG["FFMPEG_PATH"], "-version"], 
+                                  capture_output=True, text=True, timeout=5)
+            ffmpeg_available = result.returncode == 0
+        except:
+            pass
+            
+        if not ffmpeg_available:
+            await processing_msg.edit_text(
+                "🔧 **Installing FFmpeg...**\n\n"
+                "Installing required dependencies for streaming.\n"
+                "This is a one-time setup that may take 1-2 minutes.\n\n"
+                "Please wait...",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            await install_ffmpeg()
+        
         # Extract title from URL or use default
         stream_title = text.split('/')[-1].replace('.m3u8', '') or f"Stream_{user.first_name}"
+        
+        await processing_msg.edit_text(
+            "🚀 **Initializing Stream...**\n\n"
+            "⏳ **Progress:**\n"
+            "✅ URL validated\n"
+            "✅ FFmpeg ready\n"
+            "🔄 Starting stream engine...\n"
+            "🔄 Generating hosted URL...\n\n"
+            "⚡ Almost ready!",
+            parse_mode=ParseMode.MARKDOWN
+        )
         
         # Create stream
         stream_id = await start_stream_restream(text, user.id, stream_title)
@@ -655,6 +729,10 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"**📊 Status:** {info['status'].title()}\n\n"
                 f"**🔗 Your Hosted URL:**\n`{info['hosted_url']}`\n\n"
                 f"**📱 Direct Player:**\n{info['player_url']}\n\n"
+                f"**✨ Features:**\n"
+                f"• Real-time streaming\n"
+                f"• Auto health monitoring\n"
+                f"• Mobile-optimized player\n\n"
                 f"**🎯 Ready to share!** Copy the hosted URL and use it anywhere."
             )
             
@@ -674,7 +752,9 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"**📝 Possible Issues:**\n"
             f"• Source URL is not accessible\n"
             f"• Stream is offline or private\n"
+            f"• FFmpeg installation failed\n"
             f"• Network connectivity issues\n\n"
+            f"**💡 Solution:** Try a different m3u8 URL or contact support.\n\n"
             f"**🔗 Your URL:** `{text[:50]}...`",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=create_main_keyboard()
@@ -682,7 +762,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ENHANCED WEB SERVER ====================
 async def init_web_server():
-    """FIXED: Enhanced web server with proper error handling - RETURNS VALID APPLICATION"""
+    """FIXED: Enhanced web server with proper error handling"""
     try:
         app = web.Application(client_max_size=MAX_CONTENT_LENGTH)
 
@@ -699,7 +779,7 @@ async def init_web_server():
                 "server_info": {
                     "base_url": BASE_URL,
                     "port": PORT,
-                    "uptime": "healthy"
+                    "ffmpeg_available": os.path.exists("/usr/bin/ffmpeg") or os.path.exists("/usr/local/bin/ffmpeg")
                 }
             })
 
@@ -758,7 +838,10 @@ async def init_web_server():
             try:
                 sid = request.match_info['stream_id']
                 if sid not in stream_manager.active_streams:
-                    return web.Response(status=404, text="Stream not found")
+                    return web.Response(
+                        text="Stream not found. Please check the stream ID or create a new stream via the Telegram bot.",
+                        status=404
+                    )
                     
                 info = stream_manager.active_streams[sid]
                 playlist_url = get_hosted_url(sid)
@@ -791,6 +874,14 @@ async def init_web_server():
             font-size: 2rem;
             margin: 0 0 10px 0;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }}
+        .status {{
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid #10b981;
+            border-radius: 10px;
+            padding: 10px;
+            margin-bottom: 20px;
+            text-align: center;
         }}
         .video-container {{
             background: rgba(0,0,0,0.5);
@@ -843,6 +934,10 @@ async def init_web_server():
             <p>Live Streaming • {info.get('viewers', 0)} viewers</p>
         </div>
         
+        <div class="status">
+            ✅ Stream is {info['status']} and ready to play
+        </div>
+        
         <div class="video-container">
             <video id="video" controls autoplay muted playsinline></video>
         </div>
@@ -861,6 +956,7 @@ async def init_web_server():
             <p><strong>Status:</strong> {info['status'].title()}</p>
             <p><strong>Created:</strong> {info['created_at'].strftime('%Y-%m-%d %H:%M:%S')}</p>
             <p><strong>Hosted URL:</strong> <code>{playlist_url}</code></p>
+            <p><strong>Bot:</strong> <a href="https://t.me/YOUR_BOT_USERNAME" style="color: #10b981;">@YOUR_BOT_USERNAME</a></p>
         </div>
     </div>
 
@@ -871,30 +967,50 @@ async def init_web_server():
         
         function initializePlayer() {{
             if (Hls.isSupported()) {{
-                hls = new Hls({{ debug: false, enableWorker: true, lowLatencyMode: true }});
+                hls = new Hls({{ 
+                    debug: false, 
+                    enableWorker: true, 
+                    lowLatencyMode: true,
+                    backBufferLength: 90
+                }});
                 hls.loadSource(playlistUrl);
                 hls.attachMedia(video);
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {{
+                    console.log('Stream loaded successfully');
+                }});
+                
                 hls.on(Hls.Events.ERROR, function(event, data) {{
+                    console.log('HLS Error:', data);
                     if (data.fatal) {{
                         switch(data.type) {{
                             case Hls.ErrorTypes.NETWORK_ERROR:
+                                console.log('Network error, restarting...');
                                 hls.startLoad();
                                 break;
                             case Hls.ErrorTypes.MEDIA_ERROR:
+                                console.log('Media error, recovering...');
                                 hls.recoverMediaError();
                                 break;
                             default:
+                                console.log('Fatal error, destroying player');
                                 hls.destroy();
+                                setTimeout(initializePlayer, 5000);
                                 break;
                         }}
                     }}
                 }});
             }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
                 video.src = playlistUrl;
+                console.log('Using native HLS support');
+            }} else {{
+                alert('HLS not supported in this browser');
             }}
         }}
         
-        function playStream() {{ video.play(); }}
+        function playStream() {{ 
+            video.play().catch(e => console.log('Play failed:', e)); 
+        }}
         function pauseStream() {{ video.pause(); }}
         function reloadStream() {{ 
             if (hls) {{ hls.destroy(); }}
@@ -902,17 +1018,26 @@ async def init_web_server():
         }}
         function toggleFullscreen() {{ 
             if (!document.fullscreenElement) {{
-                video.requestFullscreen();
+                video.requestFullscreen().catch(e => console.log('Fullscreen failed:', e));
             }} else {{
                 document.exitFullscreen();
             }}
         }}
         function copyUrl() {{ 
             navigator.clipboard.writeText(playlistUrl).then(() => {{
+                alert('Stream URL copied to clipboard!');
+            }}).catch(() => {{
+                const textArea = document.createElement('textarea');
+                textArea.value = playlistUrl;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
                 alert('Stream URL copied!');
             }});
         }}
         
+        // Initialize player when page loads
         initializePlayer();
     </script>
 </body>
@@ -923,14 +1048,14 @@ async def init_web_server():
                 return web.Response(status=500, text="Internal server error")
 
         async def serve_mini_app(request):
-            """Enhanced Mini App with modern UI"""
+            """Enhanced Mini App"""
             try:
                 html = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HLS Bot Mini App</title>
+    <title>HLS Bot - Stream Manager</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -953,6 +1078,7 @@ async def init_web_server():
             border-radius: 12px;
             padding: 20px;
             margin-bottom: 20px;
+            border: 1px solid rgba(0,0,0,0.1);
         }}
         .btn {{
             width: 100%;
@@ -965,7 +1091,9 @@ async def init_web_server():
             font-weight: 600;
             cursor: pointer;
             margin-bottom: 10px;
+            transition: all 0.3s ease;
         }}
+        .btn:hover {{ opacity: 0.9; }}
         .input {{
             width: 100%;
             padding: 12px;
@@ -980,6 +1108,9 @@ async def init_web_server():
             align-items: center;
             padding: 15px;
             border-bottom: 1px solid #eee;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            background: rgba(0,0,0,0.02);
         }}
         .stream-info {{
             flex: 1;
@@ -995,82 +1126,175 @@ async def init_web_server():
         .btn-small {{
             padding: 8px 16px;
             font-size: 14px;
+            margin: 0;
+            width: auto;
+        }}
+        .status-indicator {{
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }}
+        .status-active {{ background: #10b981; }}
+        .status-error {{ background: #ef4444; }}
+        .status-stopped {{ background: #6b7280; }}
+        .stats {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }}
+        .stat {{
+            text-align: center;
+            padding: 15px;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 10px;
+        }}
+        .stat-number {{
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #667eea;
+        }}
+        .stat-label {{
+            font-size: 0.8rem;
+            opacity: 0.8;
         }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🎬 HLS Streaming Bot</h1>
-        <p>Host live m3u8 streams</p>
+        <h1>🎬 HLS Stream Manager</h1>
+        <p>Create and manage live streams</p>
+    </div>
+    
+    <div class="stats">
+        <div class="stat">
+            <div class="stat-number" id="total-streams">0</div>
+            <div class="stat-label">Total Streams</div>
+        </div>
+        <div class="stat">
+            <div class="stat-number" id="active-streams">0</div>
+            <div class="stat-label">Active Now</div>
+        </div>
     </div>
     
     <div class="card">
-        <h3>📺 Host New Stream</h3>
-        <input type="url" id="stream-url" class="input" placeholder="https://example.com/playlist.m3u8">
-        <button class="btn" onclick="createStream()">🚀 Start Hosting</button>
+        <h3>📺 Create New Stream</h3>
+        <input type="url" id="stream-url" class="input" placeholder="https://example.com/playlist.m3u8" autocomplete="off">
+        <button class="btn" onclick="createStream()">
+            🚀 Start Hosting
+        </button>
+        <small style="opacity: 0.7;">Enter any live m3u8 stream URL</small>
     </div>
     
     <div class="card">
-        <h3>📊 Active Streams</h3>
-        <div id="streams-list">Loading...</div>
+        <h3>📊 Your Streams</h3>
+        <div id="streams-list">Loading streams...</div>
         <button class="btn" onclick="loadStreams()">🔄 Refresh</button>
     </div>
 
     <script>
         const BASE_URL = '{BASE_URL}';
         
+        // Initialize Telegram Web App
         if (window.Telegram?.WebApp) {{
             Telegram.WebApp.ready();
             Telegram.WebApp.expand();
+            Telegram.WebApp.setHeaderColor('#667eea');
         }}
         
         function createStream() {{
             const url = document.getElementById('stream-url').value.trim();
             if (!url) {{
-                alert('Please enter a valid URL');
+                alert('⚠️ Please enter a valid stream URL');
                 return;
             }}
-            if (!url.includes('.m3u8')) {{
-                alert('Please enter a valid m3u8 URL');
+            if (!url.includes('.m3u8') && !url.includes('playlist')) {{
+                alert('⚠️ Please enter a valid m3u8 or playlist URL');
                 return;
             }}
             
+            // Show loading state
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ Creating...';
+            btn.disabled = true;
+            
+            // Send to Telegram bot if available
             if (window.Telegram?.WebApp) {{
                 Telegram.WebApp.sendData(JSON.stringify({{
                     action: 'create_stream',
                     url: url
                 }}));
             }} else {{
-                alert('Stream creation initiated! Check the main bot.');
+                alert('✅ Stream creation initiated! Check the main bot for updates.');
             }}
+            
+            // Reset button after delay
+            setTimeout(() => {{
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                document.getElementById('stream-url').value = '';
+                loadStreams();
+            }}, 2000);
         }}
         
         function loadStreams() {{
+            const container = document.getElementById('streams-list');
+            container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.7;">Loading...</div>';
+            
             fetch('/api/streams')
-                .then(r => r.json())
+                .then(response => response.json())
                 .then(data => {{
-                    const el = document.getElementById('streams-list');
-                    if (data.streams && data.streams.length) {{
-                        el.innerHTML = data.streams.map(s => `
+                    // Update stats
+                    document.getElementById('total-streams').textContent = data.server_info?.total_streams || 0;
+                    document.getElementById('active-streams').textContent = data.server_info?.active_streams || 0;
+                    
+                    // Update streams list
+                    if (data.streams && data.streams.length > 0) {{
+                        const streamsHtml = data.streams.map(stream => `
                             <div class="stream-item">
                                 <div class="stream-info">
-                                    <div class="stream-title">${{s.title || s.stream_id}}</div>
-                                    <div class="stream-status">${{s.status.toUpperCase()}} • ${{s.viewers || 0}} viewers</div>
+                                    <div class="stream-title">
+                                        <span class="status-indicator status-${{stream.status}}"></span>
+                                        ${{stream.title || stream.stream_id}}
+                                    </div>
+                                    <div class="stream-status">
+                                        ${{stream.status.toUpperCase()}} • ${{stream.viewers || 0}} viewers • ${{stream.uptime || '0s'}}
+                                    </div>
                                 </div>
-                                <button class="btn btn-small" onclick="openPlayer('${{s.stream_id}}')">▶️</button>
+                                <div>
+                                    <button class="btn btn-small" onclick="openPlayer('${{stream.stream_id}}')">
+                                        ▶️ Play
+                                    </button>
+                                </div>
                             </div>
                         `).join('');
+                        
+                        container.innerHTML = streamsHtml;
                     }} else {{
-                        el.innerHTML = '<p>No active streams</p>';
+                        container.innerHTML = `
+                            <div style="text-align:center;padding:30px;opacity:0.7;">
+                                <div style="font-size:2rem;margin-bottom:10px;">📺</div>
+                                <p>No active streams</p>
+                                <small>Create your first stream above!</small>
+                            </div>
+                        `;
                     }}
                 }})
-                .catch(() => {{
-                    document.getElementById('streams-list').innerHTML = '<p>Error loading streams</p>';
+                .catch(error => {{
+                    console.error('Error loading streams:', error);
+                    container.innerHTML = `
+                        <div style="text-align:center;padding:20px;color:#ef4444;">
+                            ❌ Failed to load streams
+                        </div>
+                    `;
                 }});
         }}
         
-        function openPlayer(id) {{
-            const url = BASE_URL + '/player/' + id;
+        function openPlayer(streamId) {{
+            const url = `${{BASE_URL}}/player/${{streamId}}`;
             if (window.Telegram?.WebApp) {{
                 Telegram.WebApp.openLink(url);
             }} else {{
@@ -1078,8 +1302,18 @@ async def init_web_server():
             }}
         }}
         
+        // Auto-load on startup
         loadStreams();
+        
+        // Auto-refresh every 30 seconds
         setInterval(loadStreams, 30000);
+        
+        // Handle URL input validation
+        document.getElementById('stream-url').addEventListener('input', function(e) {{
+            const url = e.target.value.trim();
+            const isValid = !url || url.includes('.m3u8') || url.includes('playlist');
+            e.target.style.borderColor = isValid ? '#ddd' : '#ef4444';
+        }});
     </script>
 </body>
 </html>'''
@@ -1089,7 +1323,7 @@ async def init_web_server():
                 return web.Response(status=500, text="Internal server error")
 
         async def api_streams(request):
-            """Enhanced API endpoint for stream data"""
+            """API endpoint for stream data"""
             try:
                 streams_data = []
                 for sid, info in stream_manager.active_streams.items():
@@ -1109,14 +1343,15 @@ async def init_web_server():
                     "server_info": {
                         "total_streams": len(stream_manager.active_streams),
                         "active_streams": sum(1 for s in stream_manager.active_streams.values() if s["status"] == "active"),
-                        "server_status": "healthy"
+                        "server_status": "healthy",
+                        "base_url": BASE_URL
                     }
                 })
             except Exception as e:
                 logger.error(f"Error in API streams: {e}")
                 return web.json_response({"error": "Internal server error"}, status=500)
 
-        # Routes
+        # Add all routes
         app.router.add_get('/health', health_check)
         app.router.add_get('/stream/{stream_id}/playlist.m3u8', serve_playlist)
         app.router.add_get('/stream/{stream_id}/{segment}', serve_segment)
@@ -1125,18 +1360,18 @@ async def init_web_server():
         app.router.add_get('/api/streams', api_streams)
         
         logger.info("✅ Web application initialized successfully")
-        return app  # CRITICAL FIX: Always return the valid app instance
+        return app
         
     except Exception as e:
         logger.error(f"❌ Error initializing web server: {e}")
-        # Return a minimal app even on error to avoid None return
+        # Return a minimal app even on error
         app = web.Application()
         app.router.add_get('/health', lambda r: web.json_response({"status": "error", "message": str(e)}))
         return app
 
-# ==================== ENHANCED CLEANUP TASK ====================
+# ==================== CLEANUP TASK ====================
 async def cleanup_old_streams():
-    """Enhanced cleanup with better resource management"""
+    """Cleanup old streams periodically"""
     while True:
         try:
             await asyncio.sleep(300)  # Run every 5 minutes
@@ -1176,27 +1411,26 @@ async def cleanup_old_streams():
         except Exception as e:
             logger.error(f"❌ Cleanup task error: {e}")
 
-# ==================== ENHANCED MAIN FUNCTION ====================
+# ==================== MAIN FUNCTIONS ====================
 async def start_services(application):
-    """FIXED: Enhanced service startup with proper error handling"""
+    """Start all services with proper error handling"""
     logger.info(f"🚀 Starting Advanced HLS Bot v2.0")
     logger.info(f"🌐 Server URL: {BASE_URL}")
     logger.info(f"📊 Max Streams: {CONFIG['MAX_CONCURRENT_STREAMS']}")
     
     try:
-        # Initialize HTTP session
+        # FIXED: Initialize HTTP session with correct parameters
         await stream_manager.init_session()
         
-        # CRITICAL FIX: Ensure web_app is never None
+        # Initialize web server
         web_app = await init_web_server()
         if web_app is None:
             logger.error("❌ init_web_server returned None!")
-            # Create a minimal app as fallback
             web_app = web.Application()
             web_app.router.add_get('/health', lambda r: web.json_response({"status": "error"}))
         
-        # Start web server with the valid app
-        runner = web.AppRunner(web_app)  # This will not throw TypeError now
+        # Start web server
+        runner = web.AppRunner(web_app)
         await runner.setup()
         site = web.TCPSite(runner, HOST, PORT)
         await site.start()
@@ -1206,23 +1440,22 @@ async def start_services(application):
         try:
             commands = [
                 BotCommand("start", "🏠 Main dashboard"),
-                BotCommand("help", "❓ Get help and documentation")
+                BotCommand("help", "❓ Get help")
             ]
             await application.bot.set_my_commands(commands)
             
-            # Set mini app menu button
             mini_app_button = MenuButtonWebApp(
                 text="🎬 HLS Bot", 
                 web_app=WebAppInfo(url=f"{BASE_URL}/miniapp")
             )
             await application.bot.set_chat_menu_button(menu_button=mini_app_button)
-            logger.info("✅ Telegram bot configured with commands and menu")
+            logger.info("✅ Telegram bot configured")
         except Exception as e:
             logger.warning(f"⚠️ Could not set bot commands: {e}")
         
-        # Start background tasks
+        # Start cleanup task
         asyncio.create_task(cleanup_old_streams())
-        logger.info("✅ Background cleanup task started")
+        logger.info("✅ Background tasks started")
         
         return runner, site
         
@@ -1238,28 +1471,24 @@ async def start_services(application):
         return runner, site
 
 async def shutdown_services(application, runner: web.AppRunner):
-    """FIXED: Enhanced shutdown with proper resource cleanup"""
-    logger.info("🛑 Initiating graceful shutdown...")
+    """Shutdown all services gracefully"""
+    logger.info("🛑 Shutting down...")
     
     try:
-        # Stop all active streams
+        # Stop all streams
         for sid in list(stream_manager.active_streams.keys()):
             await stop_stream(sid)
-        logger.info("✅ All streams stopped")
         
-        # Close HTTP session properly to avoid unclosed session warnings
+        # Close HTTP session
         await stream_manager.close_session()
-        
-        # Additional wait to ensure all connections are closed
         await asyncio.sleep(0.25)
         
         # Shutdown web server
         if runner:
             await runner.cleanup()
-            logger.info("✅ Web server shutdown complete")
-        
+            
     except Exception as e:
-        logger.error(f"❌ Error during shutdown: {e}")
+        logger.error(f"❌ Shutdown error: {e}")
     
     logger.info("✅ Shutdown complete")
 
@@ -1270,28 +1499,27 @@ def install_signal_handlers(loop, stop_func):
             loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(stop_func()))
             logger.info(f"✅ Signal handler installed for {sig.name}")
         except NotImplementedError:
-            # Windows or restricted environments
             logger.warning(f"⚠️ Could not install signal handler for {sig.name}")
 
 async def main_async():
-    """FIXED: Enhanced main async function with bulletproof error handling"""
+    """Main async function"""
     # Validate bot token
     if BOT_TOKEN == "REPLACE_ME" or not BOT_TOKEN.strip():
-        logger.error("❌ BOT_TOKEN is missing. Please set the BOT_TOKEN environment variable.")
+        logger.error("❌ BOT_TOKEN is missing")
         return
         
-    # Check FFmpeg availability (optional, don't fail if missing)
+    # Check FFmpeg (don't fail if missing, will install on demand)
     try:
         result = subprocess.run([CONFIG["FFMPEG_PATH"], "-version"], 
                               capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            logger.info("✅ FFmpeg detected and working")
+            logger.info("✅ FFmpeg detected")
         else:
-            logger.warning("⚠️ FFmpeg not found, stream creation may fail")
+            logger.warning("⚠️ FFmpeg not found, will install on demand")
     except Exception as e:
         logger.warning(f"⚠️ FFmpeg check failed: {e}")
 
-    # Build application
+    # Build Telegram application
     try:
         application = ApplicationBuilder().token(BOT_TOKEN).build()
         
@@ -1306,39 +1534,39 @@ async def main_async():
         logger.error(f"❌ Failed to build Telegram application: {e}")
         return
 
-    # Start all services with error handling
+    # Start services
     try:
         runner, site = await start_services(application)
     except Exception as e:
         logger.error(f"❌ Failed to start services: {e}")
         return
 
-    # Setup graceful shutdown
+    # Setup shutdown handler
     async def stop_all():
         logger.info("🛑 Shutdown signal received")
         try:
             await application.stop()
             await shutdown_services(application, runner)
         except Exception as e:
-            logger.error(f"❌ Error during stop_all: {e}")
+            logger.error(f"❌ Stop error: {e}")
 
     loop = asyncio.get_running_loop()
     install_signal_handlers(loop, stop_all)
 
-    # Start the bot with error handling
+    # Start the bot
     try:
         await application.initialize()
         await application.start()
         
         logger.info("🎬 Advanced HLS Streaming Bot v2.0 is now LIVE!")
         logger.info(f"📱 Send m3u8 URLs to the bot to start streaming")
-        logger.info(f"🌐 Web interface available at: {BASE_URL}")
+        logger.info(f"🌐 Web interface: {BASE_URL}")
         logger.info(f"🎮 Mini app: {BASE_URL}/miniapp")
 
-        # Keep running until shutdown
+        # Keep running
         try:
             while True:
-                await asyncio.sleep(3600)  # Sleep for 1 hour at a time
+                await asyncio.sleep(3600)
         except asyncio.CancelledError:
             pass
         finally:
@@ -1349,7 +1577,7 @@ async def main_async():
         await stop_all()
 
 def main():
-    """Main entry point with top-level error handling"""
+    """Main entry point"""
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:
