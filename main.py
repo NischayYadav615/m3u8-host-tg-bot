@@ -24,7 +24,7 @@ from typing import Dict, Optional, Any, List
 
 # Web server with streaming optimization
 from aiohttp import web, ClientSession, WSMsgType, ClientTimeout
-from aiohttp.web_ws import WSResponse
+from aiohttp.web import WebSocketResponse  # FIXED: Correct import for WebSocket
 import aiofiles
 
 # Latest Telegram bot (PTB v22.3 compatible)
