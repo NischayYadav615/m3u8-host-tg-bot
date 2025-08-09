@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-🎬 KOYEB-READY TELEGRAM HLS BOT - COMPLETE & WORKING 🎬
+🎬 KOYEB-READY TELEGRAM HLS BOT - FIXED VERSION 🎬
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ TESTED & WORKING - Fixed all errors
+✅ FIXED: Telegram bot library compatibility issues
 🚀 Port 8080 optimized for Koyeb deployment
 📺 Host live m3u8 streams through your own server
 
 Save this as main.py and deploy to Koyeb:
-1. Build command: pip install aiohttp aiofiles python-telegram-bot
+1. Build command: pip install aiohttp aiofiles python-telegram-bot==20.7
 2. Run command: python main.py
 3. Port: 8080 (auto-detected)
 """
@@ -33,7 +33,7 @@ import aiofiles
 
 # Telegram bot  
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, MenuButton, MenuButtonWebApp, BotCommand
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 from telegram.constants import ParseMode
 
 # ==================== CONFIGURATION ====================
@@ -968,8 +968,8 @@ async def main():
     
     logger.info(f"🌐 Web server started at {BASE_URL}")
     
-    # Initialize Telegram bot
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Initialize Telegram bot with fixed Application API
+    application = Application.builder().token(BOT_TOKEN).build()
     
     # Add handlers
     application.add_handler(CommandHandler("start", cmd_start))
@@ -995,26 +995,31 @@ async def main():
     # Start cleanup task
     asyncio.create_task(cleanup_old_streams())
     
-    # Start the bot
+    # Start the bot with proper polling
     await application.initialize()
     await application.start()
-    await application.updater.start_polling()
+    
+    # Start polling in a more compatible way
+    await application.updater.start_polling(drop_pending_updates=True)
     
     logger.info("✅ HLS Bot is running!")
     logger.info(f"📺 Send m3u8 URLs to host streams")
     logger.info(f"🌐 Web interface: {BASE_URL}")
     
     try:
-        # Keep running
+        # Keep running until interrupted
         while True:
             await asyncio.sleep(1)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         logger.info("🛑 Shutting down...")
     finally:
         # Cleanup
-        await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
+        try:
+            await application.updater.stop()
+            await application.stop()
+            await application.shutdown()
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
         
         # Stop all streams
         for stream_id in list(active_streams.keys()):
