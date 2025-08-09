@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 API_ID = int(os.getenv("API_ID", "24720215"))
 API_HASH = os.getenv("API_HASH", "c0d3395590fecba19985f95d6300785e")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8484774966:AAEnRoHlgPaPtra8vfFpVOvmnfpPEUY1qAQ")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7735683292:AAF1WjFlsxm2lMvlxf4BU5Z8yTg1qv68fjM")
 MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://Nischay999:Nischay999@cluster0.5kufo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "m3u8_bot")
 
