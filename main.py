@@ -48,6 +48,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "7328634302:AAFGTN13P3EAhqTC5KyzsPH28n9-SQ7c5
 MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://Nischay999:Nischay999@cluster0.5kufo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "m3u8_bot")
 
+
 # Auto-detect server configuration
 def get_server_config():
     """Auto-detect server URL and port"""
@@ -94,32 +95,87 @@ async def validate_bot_token(token: str) -> bool:
         logger.error(f"Bot token validation error: {e}")
         return False
 
-# Initialize clients with validation
-async def initialize_bot():
-    """Initialize bot with proper error handling"""
+# Initialize bot client immediately
+try:
+    app = Client(
+        "m3u8_bot", 
+        api_id=API_ID, 
+        api_hash=API_HASH, 
+        bot_token=BOT_TOKEN,
+        workdir="./session"
+    )
+    logger.info("Bot client created")
+except Exception as e:
+    logger.error(f"Failed to create bot client: {e}")
+    app = async def handle_add_command(client, message: Message):
+    """Handle /add command"""
     try:
-        # Validate token first
-        if not await validate_bot_token(BOT_TOKEN):
-            logger.error("Bot token validation failed - token may be invalid or expired")
-            raise ValueError("Invalid bot token")
+        user = message.from_user
+        await user_manager.register_user(user.id, user.username, user.first_name)
         
-        # Create bot client
-        bot_client = Client(
-            "m3u8_bot", 
-            api_id=API_ID, 
-            api_hash=API_HASH, 
-            bot_token=BOT_TOKEN,
-            workdir="./session"
-        )
+        args = message.text.split()[1:]
+        if not args:
+            await message.reply_text(
+                "❌ Please provide an M3U8 URL.\n"
+                "Usage: `/add <url> [title]`"
+            )
+            return
         
-        logger.info("Bot client created successfully")
-        return bot_client
+        url = args[0]
+        title = " ".join(args[1:]) if len(args) > 1 else None
         
-    except Exception as e:
-        logger.error(f"Bot initialization failed: {e}")
-        raise
+        # Validate URL format
+        if not url.startswith(('http://', 'https://')):
+            await message.reply_text("❌ Please provide a valid HTTP/HTTPS URL.")
+            return
+        
+        progress_msg = await message.reply_text("🔄 Adding stream... Please wait.")
+        
+        result = await stream_manager.add_stream(user.id, url, title)
+        
+        if result["success"]:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📺 Open Stream", url=result["proxy_url"])],
+                [InlineKeyboardButton("📋 My Streams", callback_data="my_streams")]
+            ])
+            
+            success_text = f"""
+✅ **Stream Added Successfully!**
 
-app = None  # Will be initialized in startup
+**Title:** {title or f"Stream {result['stream_id']}"}
+**Stream ID:** `{result['stream_id']}`
+**Your URL:** `{result['proxy_url']}`
+**Original:** `{result['original_url']}`
+
+🎬 Your stream is now hosted and ready to use!
+            """
+            
+            await progress_msg.edit_text(success_text, reply_markup=keyboard)
+        else:
+            await progress_msg.edit_text(f"❌ Failed to add stream: {result['error']}")
+            
+    except Exception as e:
+        logger.error(f"Error in add command: {e}")
+        await message.reply_text("❌ An error occurred while adding the stream.")
+
+async def handle_convert_command(client, message: Message):
+    """Handle /convert command"""
+    try:
+        user = message.from_user
+        await user_manager.register_user(user.id, user.username, user.first_name)
+        
+        args = message.text.split()[1:]
+        if not args:
+            await message.reply_text(
+                "❌ Please provide a video URL.\n"
+                "Usage: `/convert <url> [title]`"
+            )
+            return
+        
+        url = args[0]
+        title = " ".join(args[1:]) if len(args) > 1 else None
+        
+        # Validate URL format
 
 # MongoDB setup with error handling
 async def setup_mongodb():
@@ -1187,9 +1243,14 @@ async def startup():
     try:
         logger.info("Starting M3U8 Bot initialization...")
         
-        # Initialize bot client
-        app = await initialize_bot()
-        logger.info("Bot client initialized")
+        # Validate bot token first
+        if not await validate_bot_token(BOT_TOKEN):
+            logger.error("Bot token validation failed - token may be invalid or expired")
+            logger.error("Please get a new token from @BotFather and update BOT_TOKEN environment variable")
+            raise ValueError("Invalid bot token")
+        
+        # Ensure session directory exists
+        Path("./session").mkdir(exist_ok=True)
         
         # Setup MongoDB
         mongo_client = await setup_mongodb()
@@ -1201,9 +1262,6 @@ async def startup():
             logger.info("Database collections initialized")
         else:
             logger.warning("Using fallback memory storage")
-        
-        # Create session directory
-        Path("./session").mkdir(exist_ok=True)
         
         # Start web server
         web_app = await create_web_app()
