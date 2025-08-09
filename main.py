@@ -584,21 +584,22 @@ initializePlayer();
         return web.Response(text=html, content_type='text/html')
 
 async def serve_mini_app(request):
-    html = '''<!DOCTYPE html>
+    base_url = BASE_URL  # Get the BASE_URL value
+    html = f'''<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HLS Bot Mini App</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:var(--tg-theme-bg-color,#fff);color:var(--tg-theme-text-color,#000);padding:20px}
-.header{text-align:center;margin-bottom:30px;padding:20px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:15px;color:#fff}
-.card{background:var(--tg-theme-secondary-bg-color,#f8f9fa);border-radius:12px;padding:20px;margin-bottom:20px}
-.btn{width:100%;padding:15px;border:none;border-radius:10px;background:var(--tg-theme-button-color,#3390ec);color:var(--tg-theme-button-text-color,#fff);font-size:16px;font-weight:600;cursor:pointer;margin-bottom:10px}
-.input{width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:16px;margin-bottom:15px}
-.stream-item{display:flex;justify-content:space-between;align-items:center;padding:15px;border-bottom:1px solid #eee}
-.status-active{color:#34c759}.status-error{color:#ff3b30}.status-stopped{color:#8e8e93}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:var(--tg-theme-bg-color,#fff);color:var(--tg-theme-text-color,#000);padding:20px}}
+.header{{text-align:center;margin-bottom:30px;padding:20px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:15px;color:#fff}}
+.card{{background:var(--tg-theme-secondary-bg-color,#f8f9fa);border-radius:12px;padding:20px;margin-bottom:20px}}
+.btn{{width:100%;padding:15px;border:none;border-radius:10px;background:var(--tg-theme-button-color,#3390ec);color:var(--tg-theme-button-text-color,#fff);font-size:16px;font-weight:600;cursor:pointer;margin-bottom:10px}}
+.input{{width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:16px;margin-bottom:15px}}
+.stream-item{{display:flex;justify-content:space-between;align-items:center;padding:15px;border-bottom:1px solid #eee}}
+.status-active{{color:#34c759}}.status-error{{color:#ff3b30}}.status-stopped{{color:#8e8e93}}
 </style>
 </head>
 <body>
@@ -614,34 +615,36 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:var(--tg
     <button class="btn" onclick="loadStreams()">🔄 Refresh</button>
   </div>
 <script>
+const BASE_URL = '{base_url}';
 Telegram.WebApp.ready(); Telegram.WebApp.expand();
-function createStream(){
+function createStream(){{
   const url=document.getElementById('stream-url').value.trim();
   if(!url) return Telegram.WebApp.showAlert('Please enter a valid URL');
   if(!url.includes('.m3u8')) return Telegram.WebApp.showAlert('Please enter a valid m3u8 URL');
-  Telegram.WebApp.sendData(JSON.stringify({action:'create_stream', url}));
-}
-function loadStreams(){
+  Telegram.WebApp.sendData(JSON.stringify({{action:'create_stream', url}}));
+}}
+function loadStreams(){{
   fetch('/api/streams')
     .then(r=>r.json())
-    .then(data=>{
+    .then(data=>{{
       const el=document.getElementById('streams-list');
-      if(data.streams && data.streams.length){
+      if(data.streams && data.streams.length){{
         el.innerHTML=data.streams.map(s=>`
           <div class="stream-item">
-            <div><strong>${s.stream_id}</strong><br><small class="status-${s.status}">${s.status.toUpperCase()}</small></div>
-            <button onclick="openPlayer('${s.stream_id}')">▶️</button>
+            <div><strong>${{s.stream_id}}</strong><br><small class="status-${{s.status}}">${{s.status.toUpperCase()}}</small></div>
+            <button onclick="openPlayer('${{s.stream_id}}')">▶️</button>
           </div>`).join('');
-      } else el.innerHTML='<p>No active streams</p>';
-    })
+      }} else el.innerHTML='<p>No active streams</p>';
+    }})
     .catch(()=>document.getElementById('streams-list').innerHTML='<p>Error loading streams</p>');
-}
-function openPlayer(id){ window.open('''' + BASE_URL + '''/player/'+id, '_blank'); }
+}}
+function openPlayer(id){{ window.open(BASE_URL + '/player/' + id, '_blank'); }}
 loadStreams();
 </script>
 </body>
 </html>'''
     return web.Response(text=html, content_type='text/html')
+
 
 
     async def api_streams(request):
