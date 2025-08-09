@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 API_ID = int(os.getenv("API_ID", "24720215"))
 API_HASH = os.getenv("API_HASH", "c0d3395590fecba19985f95d6300785e")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7735683292:AAF1WjFlsxm2lMvlxf4BU5Z8yTg1qv68fjM")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7328634302:AAFGTN13P3EAhqTC5KyzsPH28n9-SQ7c51Y")
 MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://Nischay999:Nischay999@cluster0.5kufo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "m3u8_bot")
 
@@ -78,8 +78,48 @@ def get_server_config():
 
 BASE_URL, SERVER_PORT = get_server_config()
 
-# Initialize clients
-app = Client("m3u8_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+async def validate_bot_token(token: str) -> bool:
+    """Validate bot token by making a test request"""
+    try:
+        url = f"https://api.telegram.org/bot{token}/getMe"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get('ok', False)
+                else:
+                    logger.error(f"Bot token validation failed: HTTP {response.status}")
+                    return False
+    except Exception as e:
+        logger.error(f"Bot token validation error: {e}")
+        return False
+
+# Initialize clients with validation
+async def initialize_bot():
+    """Initialize bot with proper error handling"""
+    try:
+        # Validate token first
+        if not await validate_bot_token(BOT_TOKEN):
+            logger.error("Bot token validation failed - token may be invalid or expired")
+            raise ValueError("Invalid bot token")
+        
+        # Create bot client
+        bot_client = Client(
+            "m3u8_bot", 
+            api_id=API_ID, 
+            api_hash=API_HASH, 
+            bot_token=BOT_TOKEN,
+            workdir="./session"
+        )
+        
+        logger.info("Bot client created successfully")
+        return bot_client
+        
+    except Exception as e:
+        logger.error(f"Bot initialization failed: {e}")
+        raise
+
+app = None  # Will be initialized in startup
 
 # MongoDB setup with error handling
 async def setup_mongodb():
@@ -1142,9 +1182,15 @@ async def error_handler(client, message, error):
 # Startup and shutdown handlers
 async def startup():
     """Initialize bot and web server"""
-    global mongo_client, db, streams_collection, users_collection, analytics_collection
+    global mongo_client, db, streams_collection, users_collection, analytics_collection, app
     
     try:
+        logger.info("Starting M3U8 Bot initialization...")
+        
+        # Initialize bot client
+        app = await initialize_bot()
+        logger.info("Bot client initialized")
+        
         # Setup MongoDB
         mongo_client = await setup_mongodb()
         if mongo_client:
@@ -1153,6 +1199,11 @@ async def startup():
             users_collection = db.users  
             analytics_collection = db.analytics
             logger.info("Database collections initialized")
+        else:
+            logger.warning("Using fallback memory storage")
+        
+        # Create session directory
+        Path("./session").mkdir(exist_ok=True)
         
         # Start web server
         web_app = await create_web_app()
@@ -1165,26 +1216,63 @@ async def startup():
         logger.info(f"Web server started on port {SERVER_PORT}")
         logger.info(f"Base URL: {BASE_URL}")
         
-        # Start bot
-        await app.start()
-        logger.info("Bot started successfully")
+        # Start bot with retry logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await app.start()
+                logger.info("Bot started successfully")
+                
+                # Get bot info
+                me = await app.get_me()
+                logger.info(f"Bot info: @{me.username} ({me.first_name})")
+                break
+                
+            except Exception as e:
+                logger.error(f"Bot start attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    raise
+                await asyncio.sleep(2)
         
-        # Send startup notification
+        # Send startup notification to admin
         try:
-            await app.send_message(123456789, f"🚀 Bot started!\nServer: {BASE_URL}")  # Replace with your admin ID
-        except:
-            pass
+            admin_ids = [123456789, 5137262495]  # Add your admin IDs here
+            for admin_id in admin_ids:
+                try:
+                    await app.send_message(
+                        admin_id, 
+                        f"🚀 **M3U8 Bot Started!**\n\n"
+                        f"**Server:** `{BASE_URL}`\n"
+                        f"**Status:** 🟢 Online\n"
+                        f"**Database:** {'🗄️ MongoDB' if mongo_client else '💾 Memory'}\n"
+                        f"**Bot:** @{me.username}"
+                    )
+                    logger.info(f"Startup notification sent to {admin_id}")
+                    break
+                except:
+                    continue
+        except Exception as e:
+            logger.warning(f"Could not send startup notification: {e}")
             
     except Exception as e:
         logger.error(f"Startup error: {e}")
+        raise
 
 async def shutdown():
     """Cleanup on shutdown"""
     try:
+        logger.info("Starting shutdown process...")
+        
         await stream_manager.processor.close()
+        
         if mongo_client:
             mongo_client.close()
-        await app.stop()
+            logger.info("MongoDB connection closed")
+            
+        if app:
+            await app.stop()
+            logger.info("Bot stopped")
+            
         logger.info("Bot shutdown completed")
     except Exception as e:
         logger.error(f"Shutdown error: {e}")
@@ -1193,28 +1281,45 @@ async def shutdown():
 async def main():
     """Main function"""
     try:
+        logger.info("M3U8 Bot starting...")
         await startup()
         
         # Keep the bot running
+        logger.info("Bot is running... Press Ctrl+C to stop")
         await asyncio.Future()  # Run forever
         
     except KeyboardInterrupt:
         logger.info("Received shutdown signal")
     except Exception as e:
         logger.error(f"Main error: {e}")
+        # Don't exit on startup errors in production
+        if not os.getenv("PRODUCTION"):
+            raise
     finally:
         await shutdown()
 
 if __name__ == "__main__":
-    # Production deployment
+    # Production deployment with better error handling
     if os.getenv("PRODUCTION"):
-        import uvloop
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        try:
+            import uvloop
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            logger.info("Using uvloop for better performance")
+        except ImportError:
+            logger.warning("uvloop not available, using default event loop")
     
+    # Create session directory
+    Path("./session").mkdir(exist_ok=True)
+    
+    # Run with proper error handling
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
-        exit(1)
+        if not os.getenv("PRODUCTION"):
+            exit(1)
+        else:
+            # In production, log error but don't exit
+            logger.error("Production mode: continuing despite error")
